@@ -9,8 +9,6 @@ DOIDedupImportPlugin = {
     showSummaryForSingleSuccessfulImport: false,
     placeholderText: "可粘贴 DOI 或带 DOI 的纯文本\n支持 CRITICAL/HIGH/MODERATE 分组\n按 Enter 导入，Shift+Enter 换行",
     relevanceTagPrefix: "relevance:",
-    markReusedTitles: false,
-    reusedTitlePrefix: "♻️ ",
     lookupPanelLayoutPrefKey: "doiDedupImport.lookupPanelLayout",
     lookupPanelDefaultWidth: 560,
     lookupPanelDefaultHeight: 260,
@@ -771,28 +769,61 @@ DOIDedupImportPlugin = {
     return "already-tagged";
   },
 
-  async ensureReusedTitleMarker(item) {
-    if (!this.config.markReusedTitles) {
-      return "disabled";
-    }
+  // 匹配标题开头的 ♻️ 标记（含可能的变体选择符与空格，允许重复出现）
+  reusedTitleMarkerPattern: /^(?:♻️?\s*)+/,
 
-    const prefix = this.config.reusedTitlePrefix || "";
-    if (!prefix) {
-      return "no-marker";
-    }
+  stripTitleMarker(title) {
+    return (title || "").replace(this.reusedTitleMarkerPattern, "");
+  },
 
+  async ensureReusedTitleMarkerRemoved(item) {
     const title = item.getField("title") || "";
     if (!title) {
       return "no-title";
     }
 
-    if (title.startsWith(prefix)) {
-      return "already-marked";
+    const cleanedTitle = this.stripTitleMarker(title);
+    if (cleanedTitle === title) {
+      return "clean";
     }
 
-    item.setField("title", `${prefix}${title}`);
+    item.setField("title", cleanedTitle);
     await item.saveTx();
-    return "title-marked";
+    return "title-cleaned";
+  },
+
+  // 启动时清理整个文库中历史遗留的 ♻️ 标题标记
+  async cleanupExistingTitleMarkers() {
+    try {
+      if (Zotero.initializationPromise) {
+        await Zotero.initializationPromise;
+      }
+      let cleanedCount = 0;
+      for (const library of Zotero.Libraries.getAll()) {
+        const search = new Zotero.Search();
+        search.libraryID = library.libraryID;
+        search.addCondition("title", "contains", "♻");
+        const itemIDs = await search.search();
+        if (!itemIDs || !itemIDs.length) {
+          continue;
+        }
+        const items = await Zotero.Items.getAsync(itemIDs);
+        for (const item of items) {
+          if (!item || !item.isRegularItem()) {
+            continue;
+          }
+          const action = await this.ensureReusedTitleMarkerRemoved(item);
+          if (action === "title-cleaned") {
+            cleanedCount += 1;
+          }
+        }
+      }
+      if (cleanedCount) {
+        this.log(`Startup cleanup removed ♻️ marker from ${cleanedCount} item title(s)`);
+      }
+    } catch (error) {
+      this.log(`Startup title marker cleanup failed: ${error}`);
+    }
   },
 
   incrementRelevanceSummary(summary, relevance, action) {
@@ -809,12 +840,10 @@ DOIDedupImportPlugin = {
   async applyExistingItemActions(item, collectionID, relevance, summary) {
     const collectionAction = await this.ensureItemInCollection(item, collectionID);
     const relevanceAction = await this.ensureRelevanceTag(item, relevance);
-    const titleMarkerAction = await this.ensureReusedTitleMarker(item);
+    const titleMarkerAction = await this.ensureReusedTitleMarkerRemoved(item);
     this.incrementRelevanceSummary(summary, relevance, relevanceAction);
-    if (titleMarkerAction === "title-marked") {
-      summary.reusedTitleMarkedCount += 1;
-    } else if (titleMarkerAction === "already-marked") {
-      summary.reusedTitleAlreadyMarkedCount += 1;
+    if (titleMarkerAction === "title-cleaned") {
+      summary.reusedTitleCleanedCount += 1;
     }
     return { collectionAction, relevanceAction, titleMarkerAction };
   },
@@ -1010,8 +1039,7 @@ DOIDedupImportPlugin = {
       uniqueDOIs: parsed.orderedDOIs.length,
       duplicateInputDOIs: parsed.duplicateInputDOIs,
       relevanceTaggedCount: 0,
-      reusedTitleMarkedCount: 0,
-      reusedTitleAlreadyMarkedCount: 0,
+      reusedTitleCleanedCount: 0,
       relevanceCounts: {
         critical: 0,
         high: 0,
@@ -1131,7 +1159,7 @@ DOIDedupImportPlugin = {
       `唯一 DOI：${summary.uniqueDOIs}`,
       `带相关性标签：${summary.relevanceTaggedCount}`,
       `复用已有条目：${summary.existing.length}`,
-      `复用条目新增标题标记：${summary.reusedTitleMarkedCount}`,
+      `清除标题♻️标记：${summary.reusedTitleCleanedCount}`,
       `新导入：${summary.imported.length}`,
       `导入后回收重复：${summary.reconciledDuplicateImports.length}`,
       `保守跳过：${summary.skipped.length}`,
@@ -1142,14 +1170,12 @@ DOIDedupImportPlugin = {
     const linked = summary.existing.filter((entry) => entry.collectionAction === "linked-to-collection").length;
     const alreadyInCollection = summary.existing.filter((entry) => entry.collectionAction === "already-in-collection").length;
     const reusedWithoutCollection = summary.existing.filter((entry) => entry.collectionAction === "no-target-collection").length;
-    const alreadyMarkedTitles = summary.reusedTitleAlreadyMarkedCount || 0;
 
     if (summary.existing.length) {
       lines.push("");
       lines.push(`已有条目中，新增加入目标文件夹：${linked}`);
       lines.push(`已有条目中，本来就在目标文件夹：${alreadyInCollection}`);
       lines.push(`已有条目中，仅复用不移动：${reusedWithoutCollection}`);
-      lines.push(`已有条目中，标题原本已有标记：${alreadyMarkedTitles}`);
     }
 
     const relevanceLines = [

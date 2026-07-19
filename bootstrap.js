@@ -13,6 +13,8 @@ async function startup({ id, version, rootURI }) {
   Services.scriptloader.loadSubScript(rootURI + "doi-dedup-import-plugin.js");
   DOIDedupImportPlugin.init({ id, version, rootURI });
   DOIDedupImportPlugin.addToAllWindows();
+  // 启动时自动清理历史遗留的 ♻️ 标题标记，避免污染参考文献
+  DOIDedupImportPlugin.cleanupExistingTitleMarkers();
 }
 
 function onMainWindowLoad({ window }) {
