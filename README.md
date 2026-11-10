@@ -99,11 +99,24 @@ MODERATE
 - `relevance:moderate`
 - `relevance:low`
 
+### 自动更新
+
+从 1.3.1 起，插件的 `update_url` 指向仓库 `main` 分支的 [`updates.json`](updates.json)。Zotero 会定期检查并自动安装新版本，也可在 `Tools → Plugins → ⚙ → Check for Updates` 手动检查。
+
+注意：1.3.0 及更早版本的 `update_url` 是占位地址，需要手动安装一次 1.3.1，之后才能自动更新。
+
+发布新版本的步骤：
+
+1. 修改 `manifest.json` 的 `version`，运行 `bash build.sh`
+2. 在 `updates.json` 中追加新版本条目（`update_link` 指向 Release 附件，`update_hash` 为 `sha256:` + XPI 哈希）
+3. 提交并推送到 `main`，创建同名 tag 的 GitHub Release 并上传 XPI
+
 ## 兼容性
 
 - Zotero 7
 - Zotero 8
 - Zotero 9
+- Zotero 10
 
 ## 当前行为说明
 
